@@ -14,6 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Mail;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PKISharp.WACS.Acme
@@ -294,7 +295,24 @@ namespace PKISharp.WACS.Acme
             _client.Account = account;
         }
 
-        internal async Task<byte[]> GetCertificate(OrderDetails order) => await Retry(() => _client.GetOrderCertificateAsync(order));
+        internal async Task<byte[]> GetCertificate(OrderDetails order)
+        {
+            // We want to wait until the certificate is available before we try to get it
+            // or else a NotFound error will be thrown
+            _log.Information("Waiting up to 5 minutes for certificate to become available...");
+            var waitUtil = DateTime.Now.AddSeconds(300);
+            while (DateTime.Now < waitUtil)
+            {
+                Thread.Sleep(10 * 1000);
+                order = await _client.GetOrderDetailsAsync(order.OrderUrl, existing: order);
+                if (!string.IsNullOrEmpty(order.Payload.Certificate))
+                {
+                    break;
+                }
+            }
+
+            return await Retry(() => _client.GetOrderCertificateAsync(order));
+        }
 
         internal async Task RevokeCertificate(byte[] crt) => await Retry(async () => {
             await _client.RevokeCertificateAsync(crt, RevokeReason.Unspecified);
